@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=42", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pybuddy"
+version = "0.1.0"
+description = "Your sarcastic Python programming buddy — discovers functions, suggests patterns, roasts your code."
+readme = "README.md"
+requires-python = ">=3.8"
+license = {text = "MIT"}
+authors = [{ name = "rapagnanid" }]
+
+dependencies = [
+    "click>=8.0",
+    "rich>=12.0",
+    "anthropic>=0.18",
+    "watchdog>=3.0",
+    "plyer>=2.1",
+    "prompt-toolkit>=3.0",
+    "tomli>=1.0;python_version<'3.11'",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-mock>=3.10",
+]
+
+[project.scripts]
+pybuddy = "pybuddy.cli:cli"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

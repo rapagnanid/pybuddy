@@ -1,0 +1,57 @@
+{
+  "name": "pybuddy",
+  "displayName": "PyBuddy — Sarcastic Python Buddy",
+  "description": "Your sarcastic Python programming buddy. Analyzes your code and gives ironic, educational suggestions inline.",
+  "version": "0.1.0",
+  "publisher": "pybuddy",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": ["Linters", "Education", "Programming Languages"],
+  "activationEvents": [
+    "onLanguage:python",
+    "onLanguage:jupyter"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "pybuddy.analyze",
+        "title": "PyBuddy: Analyze Current File"
+      },
+      {
+        "command": "pybuddy.analyzeOffline",
+        "title": "PyBuddy: Analyze Current File (Offline)"
+      }
+    ],
+    "configuration": {
+      "title": "PyBuddy",
+      "properties": {
+        "pybuddy.analyzeOnSave": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically analyze Python files on save."
+        },
+        "pybuddy.pythonPath": {
+          "type": "string",
+          "default": "pybuddy",
+          "description": "Path to the pybuddy CLI executable."
+        },
+        "pybuddy.offlineMode": {
+          "type": "boolean",
+          "default": false,
+          "description": "Use only static analysis (no AI). Free and fast."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.85.0",
+    "typescript": "^5.3.0"
+  }
+}
