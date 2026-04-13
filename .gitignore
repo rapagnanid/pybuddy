@@ -11,3 +11,8 @@ venv/
 .env
 .pytest_cache/
 .mypy_cache/
+
+# VS Code extension
+vscode-pybuddy/node_modules/
+vscode-pybuddy/out/
+*.vsix
