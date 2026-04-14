@@ -41,6 +41,11 @@
           "type": "boolean",
           "default": false,
           "description": "Use only static analysis (no AI). Free and fast."
+        },
+        "pybuddy.enableHoverExplanations": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show intelligent hover explanations on Python elements (functions, classes, variables, loops, etc.)."
         }
       }
     }

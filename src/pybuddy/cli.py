@@ -82,6 +82,20 @@ def chat(file):
     run_chat(file)
 
 
+# --- explain command ---
+
+
+@cli.command()
+@click.argument("file", type=click.Path(exists=True))
+@click.option("--offline", is_flag=True, help="Only use static analysis (no AI).")
+@click.option("--json", "as_json", is_flag=True, help="Output as JSON (for editor extensions).")
+def explain(file, offline, as_json):
+    """Extract and explain all Python elements in a file."""
+    from pybuddy.commands.explain import run_explain
+
+    run_explain(file, offline=offline, as_json=as_json)
+
+
 # --- watch command ---
 
 

@@ -4,6 +4,8 @@ import { promisify } from 'util';
 
 const execAsync = promisify(exec);
 
+// --- Interfaces ---
+
 interface AntiPattern {
     name: string;
     line: number;
@@ -28,9 +30,35 @@ interface AnalysisResult {
     summary: string;
 }
 
+interface CodeElement {
+    kind: string;
+    name: string;
+    line: number;
+    col: number;
+    end_line: number;
+    end_col: number;
+    signature: string;
+    docstring: string;
+    scope: string;
+    code_snippet: string;
+    explanation: string;
+}
+
+interface ExplainResult {
+    file: string;
+    elements: CodeElement[];
+}
+
+// --- State ---
+
 let diagnosticCollection: vscode.DiagnosticCollection;
 let statusBarItem: vscode.StatusBarItem;
 let lastAnalysis: Map<string, AnalysisResult> = new Map();
+let lastExplain: Map<string, ExplainResult> = new Map();
+
+const MAX_EXPLAIN_CACHE = 20;
+
+// --- Activation ---
 
 export function activate(context: vscode.ExtensionContext) {
     diagnosticCollection = vscode.languages.createDiagnosticCollection('pybuddy');
@@ -49,7 +77,9 @@ export function activate(context: vscode.ExtensionContext) {
         vscode.commands.registerCommand('pybuddy.analyze', () => {
             const editor = vscode.window.activeTextEditor;
             if (editor) {
-                analyzeFile(editor.document, false);
+                const config = vscode.workspace.getConfiguration('pybuddy');
+                const offlineMode = config.get<boolean>('offlineMode', false);
+                runBothAnalyses(editor.document, offlineMode);
             }
         })
     );
@@ -58,7 +88,7 @@ export function activate(context: vscode.ExtensionContext) {
         vscode.commands.registerCommand('pybuddy.analyzeOffline', () => {
             const editor = vscode.window.activeTextEditor;
             if (editor) {
-                analyzeFile(editor.document, true);
+                runBothAnalyses(editor.document, true);
             }
         })
     );
@@ -70,9 +100,18 @@ export function activate(context: vscode.ExtensionContext) {
             if (config.get<boolean>('analyzeOnSave', true)) {
                 if (document.languageId === 'python') {
                     const offlineMode = config.get<boolean>('offlineMode', false);
-                    analyzeFile(document, offlineMode);
+                    runBothAnalyses(document, offlineMode);
                 }
             }
+        })
+    );
+
+    // Clean up caches when documents close
+    context.subscriptions.push(
+        vscode.workspace.onDidCloseTextDocument((document) => {
+            const filePath = document.uri.fsPath;
+            lastAnalysis.delete(filePath);
+            lastExplain.delete(filePath);
         })
     );
 
@@ -88,6 +127,21 @@ export function activate(context: vscode.ExtensionContext) {
         vscode.languages.registerHoverProvider('python', new PyBuddyHoverProvider())
     );
 }
+
+// --- Run both analyses in parallel ---
+
+async function runBothAnalyses(document: vscode.TextDocument, offline: boolean) {
+    const config = vscode.workspace.getConfiguration('pybuddy');
+    const enableHover = config.get<boolean>('enableHoverExplanations', true);
+
+    const promises: Promise<void>[] = [analyzeFile(document, offline)];
+    if (enableHover) {
+        promises.push(explainFile(document, offline));
+    }
+    await Promise.all(promises);
+}
+
+// --- Analyze file (diagnostics + suggestions) ---
 
 async function analyzeFile(document: vscode.TextDocument, offline: boolean) {
     if (document.languageId !== 'python') {
@@ -177,6 +231,108 @@ async function analyzeFile(document: vscode.TextDocument, offline: boolean) {
     }
 }
 
+// --- Explain file (hover elements) ---
+
+async function explainFile(document: vscode.TextDocument, offline: boolean) {
+    if (document.languageId !== 'python') {
+        return;
+    }
+
+    const config = vscode.workspace.getConfiguration('pybuddy');
+    const pybuddyPath = config.get<string>('pythonPath', 'pybuddy');
+    const filePath = document.uri.fsPath;
+    const offlineFlag = offline ? '--offline' : '';
+
+    try {
+        const { stdout } = await execAsync(
+            `${pybuddyPath} explain "${filePath}" --json ${offlineFlag}`,
+            { timeout: 90000 }
+        );
+
+        const result: ExplainResult = JSON.parse(stdout);
+
+        // Evict oldest entry if cache is full
+        if (lastExplain.size >= MAX_EXPLAIN_CACHE) {
+            const firstKey = lastExplain.keys().next().value;
+            if (firstKey) {
+                lastExplain.delete(firstKey);
+            }
+        }
+
+        lastExplain.set(filePath, result);
+    } catch (error) {
+        // Silent failure — hover just won't have explanations
+        console.error('PyBuddy explain failed:', error);
+    }
+}
+
+// --- Find element at cursor position ---
+
+function findElementAtPosition(elements: CodeElement[], position: vscode.Position): CodeElement | null {
+    const line = position.line + 1;  // Convert 0-indexed to 1-indexed
+    const col = position.character;
+
+    let best: CodeElement | null = null;
+    let bestSize = Infinity;
+
+    for (const el of elements) {
+        // Check if position falls within element range
+        const afterStart = line > el.line || (line === el.line && col >= el.col);
+        const beforeEnd = line < el.end_line || (line === el.end_line && col <= el.end_col);
+
+        if (afterStart && beforeEnd) {
+            // Prefer the most specific (smallest) element
+            const size = (el.end_line - el.line) * 10000 + (el.end_col - el.col);
+            if (size < bestSize) {
+                best = el;
+                bestSize = size;
+            }
+        }
+    }
+
+    return best;
+}
+
+// --- Kind display info ---
+
+const KIND_ICONS: Record<string, string> = {
+    'function': '🔧',
+    'method': '🔧',
+    'class': '🏗️',
+    'assignment': '📦',
+    'for_loop': '🔄',
+    'while_loop': '🔄',
+    'with_statement': '🔒',
+    'list_comp': '✨',
+    'dict_comp': '✨',
+    'set_comp': '✨',
+    'generator': '✨',
+    'lambda': '⚡',
+    'import': '📥',
+    'decorator': '🎀',
+    'try_except': '🛡️',
+};
+
+const KIND_LABELS: Record<string, string> = {
+    'function': 'Funzione',
+    'method': 'Metodo',
+    'class': 'Classe',
+    'assignment': 'Variabile',
+    'for_loop': 'Ciclo for',
+    'while_loop': 'Ciclo while',
+    'with_statement': 'Context manager',
+    'list_comp': 'List comprehension',
+    'dict_comp': 'Dict comprehension',
+    'set_comp': 'Set comprehension',
+    'generator': 'Generator',
+    'lambda': 'Lambda',
+    'import': 'Import',
+    'decorator': 'Decoratore',
+    'try_except': 'Try/Except',
+};
+
+// --- Code Action Provider ---
+
 class PyBuddyCodeActionProvider implements vscode.CodeActionProvider {
     provideCodeActions(
         document: vscode.TextDocument,
@@ -236,52 +392,96 @@ class PyBuddyCodeActionProvider implements vscode.CodeActionProvider {
     }
 }
 
+// --- Hover Provider ---
+
 class PyBuddyHoverProvider implements vscode.HoverProvider {
     provideHover(
         document: vscode.TextDocument,
         position: vscode.Position
     ): vscode.Hover | null {
         const filePath = document.uri.fsPath;
-        const result = lastAnalysis.get(filePath);
-
-        if (!result) {
-            return null;
-        }
-
         const line = position.line + 1;
 
-        // Check anti-patterns
-        for (const ap of result.anti_patterns) {
-            if (ap.line === line) {
-                const md = new vscode.MarkdownString();
-                md.appendMarkdown(`**🎯 PyBuddy** — \`${ap.name}\`\n\n`);
-                md.appendMarkdown(`${ap.description}\n`);
-                md.isTrusted = true;
-                return new vscode.Hover(md);
+        // Priority 1: Anti-patterns and AI suggestions from analysis
+        const analysis = lastAnalysis.get(filePath);
+        if (analysis) {
+            // Check anti-patterns
+            for (const ap of analysis.anti_patterns) {
+                if (ap.line === line) {
+                    const md = new vscode.MarkdownString();
+                    md.appendMarkdown(`**🎯 PyBuddy** — \`${ap.name}\`\n\n`);
+                    md.appendMarkdown(`${ap.description}\n`);
+                    md.isTrusted = true;
+                    return new vscode.Hover(md);
+                }
+            }
+
+            // Check AI suggestions
+            for (const suggestion of analysis.suggestions) {
+                if (suggestion.line === line) {
+                    const md = new vscode.MarkdownString();
+                    md.appendMarkdown(`**💡 PyBuddy** — *"${suggestion.title}"*\n\n`);
+                    md.appendMarkdown(`${suggestion.explanation}\n\n`);
+                    if (suggestion.code_after) {
+                        md.appendMarkdown(`**Prova così:**\n`);
+                        md.appendCodeblock(suggestion.code_after, 'python');
+                    }
+                    if (suggestion.why) {
+                        md.appendMarkdown(`\n*Perché? ${suggestion.why}*\n`);
+                    }
+                    md.isTrusted = true;
+                    return new vscode.Hover(md);
+                }
             }
         }
 
-        // Check AI suggestions
-        for (const suggestion of result.suggestions) {
-            if (suggestion.line === line) {
-                const md = new vscode.MarkdownString();
-                md.appendMarkdown(`**💡 PyBuddy** — *"${suggestion.title}"*\n\n`);
-                md.appendMarkdown(`${suggestion.explanation}\n\n`);
-                if (suggestion.code_after) {
-                    md.appendMarkdown(`**Prova così:**\n`);
-                    md.appendCodeblock(suggestion.code_after, 'python');
-                }
-                if (suggestion.why) {
-                    md.appendMarkdown(`\n*Perché? ${suggestion.why}*\n`);
-                }
-                md.isTrusted = true;
-                return new vscode.Hover(md);
+        // Priority 2: Element explanations from explain cache
+        const explain = lastExplain.get(filePath);
+        if (explain) {
+            const element = findElementAtPosition(explain.elements, position);
+            if (element) {
+                return this._buildElementHover(element);
             }
         }
 
         return null;
     }
+
+    private _buildElementHover(element: CodeElement): vscode.Hover {
+        const icon = KIND_ICONS[element.kind] || '📌';
+        const label = KIND_LABELS[element.kind] || element.kind;
+        const md = new vscode.MarkdownString();
+
+        md.appendMarkdown(`**${icon} PyBuddy** — ${label} **${element.name}**\n\n`);
+
+        // Show signature as code block if present
+        if (element.signature) {
+            md.appendCodeblock(element.signature, 'python');
+        }
+
+        if (element.explanation) {
+            // AI mode: show the sarcastic explanation
+            md.appendMarkdown(`${element.explanation}\n`);
+        } else {
+            // Offline fallback: show structured info
+            const infoParts: string[] = [];
+            infoParts.push(`**Tipo:** ${label}`);
+            if (element.scope !== 'module') {
+                infoParts.push(`**Scope:** \`${element.scope}\``);
+            }
+            md.appendMarkdown(infoParts.join(' · ') + '\n');
+
+            if (element.docstring) {
+                md.appendMarkdown(`\n*${element.docstring}*\n`);
+            }
+        }
+
+        md.isTrusted = true;
+        return new vscode.Hover(md);
+    }
 }
+
+// --- Deactivation ---
 
 export function deactivate() {
     diagnosticCollection?.dispose();
