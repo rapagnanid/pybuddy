@@ -2,8 +2,13 @@
   "name": "pybuddy",
   "displayName": "PyBuddy — Sarcastic Python Buddy",
   "description": "Your sarcastic Python programming buddy. Analyzes your code and gives ironic, educational suggestions inline.",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "publisher": "pybuddy",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/rapagnanid/pybuddy"
+  },
+  "license": "MIT",
   "engines": {
     "vscode": "^1.85.0"
   },
